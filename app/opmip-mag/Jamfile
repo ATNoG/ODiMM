@@ -1,0 +1,52 @@
+#==============================================================================
+# Brief   : OPMIP MAG Binary Build
+# Authors : Bruno Santos <bsantos@av.it.pt>
+# -----------------------------------------------------------------------------
+# OPMIP - Open Proxy Mobile IP
+#
+# Copyright (C) 2010 Universidade de Aveiro
+# Copyright (C) 2010 Instituto de Telecomunicações - Pólo de Aveiro
+#
+# This software is distributed under a license. The full license
+# agreement can be found in the file LICENSE in this distribution.
+# This software may not be copied, modified, sold or distributed
+# other than expressed in the named license agreement.
+#
+# This software is distributed without any warranty.
+#==============================================================================
+
+lib dl : : <name>dl <link>shared ;
+
+if [ opmip.has-odtone ] {
+	opmip.explicit-alias ieee802_11
+		: drivers/ieee802_21_driver.cpp
+		  /odtone//base
+		  /odtone//mih
+		  /odtone//sap
+		:
+		:
+		: <define>OPMIP_CFG_ODTONE
+		;
+} else {
+	opmip.explicit-alias ieee802_11 ;
+}
+
+exe opmip-mag
+	: main.cpp
+	  options.cpp
+	  driver.cpp
+	  drivers/icmp.cpp
+	  drivers/madwifi_driver.cpp
+	  drivers/madwifi_driver_impl.cpp
+	  drivers/dummy.cpp
+	  ../../lib/opmip
+	  /boost//thread
+	  /boost//program_options
+	  dl
+	  ieee802_11
+	;
+
+install install
+	: opmip-mag
+	: <location>../../dist
+	;

@@ -1,0 +1,25 @@
+{
+	"router-nodes" :
+	[
+		{
+			"id"          : "kenny",
+			"ip-address"  : "2001:690:2380:777a:20c:6eff:feda:195c",
+			"ip-scope-id" : "2"
+		},
+		{
+			"id"          : "kyle",
+			"ip-address"  : "2001:690:2380:778f:20c:6eff:fedc:2a16",
+			"ip-scope-id" : "2"
+		}
+	],
+
+	"mobile-nodes" :
+	[
+		{
+			"id"        : "butters",
+			"ip-prefix" : "2001:690:2380:7792::/64",
+			"mac"       : "00:13:e8:ef:6e:81",
+			"lma-id"    : "kenny"
+		}
+	]
+}

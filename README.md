@@ -1,7 +1,8 @@
 ODiMM - Open Distributed Mobility Management
 ===========================================
 
-== Description ==
+Description
+-----------
 
 The ODiMM project aims to implement Distributed Mobility
 Management mechanisms over IP (Internet Protocol) according
@@ -14,7 +15,8 @@ the necessary changes and extensions to address the upcoming
 mobility management changes in an open development way.
 
 
-== What is OPMIP ==
+What is OPMIP
+-------------
 
 OPMIP is an implementation of the PMIPv6 standard:
 
@@ -22,7 +24,8 @@ OPMIP is an implementation of the PMIPv6 standard:
 * opmip-lma - implements the Local Mobility Anchor (LMA)
 
 
-== Help ==
+Help
+----
 
 In case of any doubt(s), suggestions and/or any other
 related topic(s) please feel free to use our mailing list:

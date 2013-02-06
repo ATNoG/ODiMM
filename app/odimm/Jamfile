@@ -1,11 +1,11 @@
 #==============================================================================
-# Brief   : OPMIP L2Event For Ploting Purposes
+# Brief   : ODiMM - Open Distributed Mobility Management
 # Authors : Bruno Santos <bsantos@av.it.pt>
 # -----------------------------------------------------------------------------
 # OPMIP - Open Proxy Mobile IP
 #
-# Copyright (C) 2010 Universidade de Aveiro
-# Copyright (C) 2010 Instituto de Telecomunicações - Pólo de Aveiro
+# Copyright (C) 2013 Universidade de Aveiro
+# Copyright (C) 2013 Instituto de Telecomunicações - Pólo de Aveiro
 #
 # This software is distributed under a license. The full license
 # agreement can be found in the file LICENSE in this distribution.
@@ -15,19 +15,12 @@
 # This software is distributed without any warranty.
 #==============================================================================
 
-project opmip/l2event
+project opmip/odimm
 	;
 
-exe opmip-l2event
+exe odimm
 	: main.cpp
 	  /boost//headers
 	  /boost//thread
-	  /boost//program_options
 	  ../../lib/opmip
-	;
-
-install install
-	: opmip-l2event
-	  ../../node.db
-	: <location>../../dist
 	;

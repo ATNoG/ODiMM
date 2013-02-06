@@ -88,6 +88,12 @@ propagates static entries.
 
 [endsect]
 
+[section:odimm ODiMM]
+
+TODO
+
+[endsect]
+
 [endsect]
 
 [section:install Installation]
@@ -316,6 +322,12 @@ The generated binaries are now under [^~\/projects/opmip/dist/].
 [endsect]
 
 [section:usage Usage]
+
+[section:odimm odimm]
+
+TODO
+
+[endsect]
 
 [section:mag opmip-mag]
 
@@ -808,7 +820,7 @@ To run the experiments you will need:
   * It also needs a DHCP client that supports IPv6
 * __iperf__ software
 
-[note IPv6 Forwarding: 
+[note IPv6 Forwarding:
 
 In order to allow MN to obtain the assigned HoA (and not act like a router), you need to disable IPv6 forwarding at the attaching MN interface:
 
@@ -817,7 +829,7 @@ sysctl net.ipv6.conf.ath1.forwarding=0
 ``
 ]
 
-[note Stateful Address Configuration: 
+[note Stateful Address Configuration:
 
 If you wish to obtain the HoA defined in the node.db, using the Routing Advertisements from MAG, you need to run DHCP in the MN. Besides, you need to disable autoconfiguration (i.e. configuration based on the interface MAC address) using the following command at the MN:
 

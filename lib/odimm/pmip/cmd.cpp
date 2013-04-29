@@ -27,6 +27,88 @@
 ///////////////////////////////////////////////////////////////////////////////
 namespace opmip { namespace pmip {
 
+static const error_category      k_pba_error_category;
+static const cmd::error_category k_cmd_error_category;
+
+static const boost::system::error_category& pba_error_category()
+{
+	return k_pba_error_category;
+}
+
+static const boost::system::error_category& cmd_error_category()
+{
+	return k_cmd_error_category;
+}
+
+///////////////////////////////////////////////////////////////////////////////
+inline void report_completion(boost::asio::io_service::strand& srv,
+                              boost::function<void(const boost::system::error_code&)>& handler,
+                              const boost::system::error_code& ec)
+{
+	if (handler) {
+		srv.post(boost::bind(handler, ec));
+		handler.clear();
+	}
+}
+
+///////////////////////////////////////////////////////////////////////////////
+const char* error_category::name() const
+{
+	return "PMIP status codes";
+}
+
+std::string error_category::message(int ev) const
+{
+	switch (ev) {
+	case ip::mproto::pba::status_ok:                                 return "accepted"; break;
+	case ip::mproto::pba::status_ok_needs_prefix:                    return "accepted but prefix discovery necessary"; break;
+	case ip::mproto::pba::status_unspecified:                        return "reason unspecified"; break;
+	case ip::mproto::pba::status_prohibited:                         return "administratively prohibited"; break;
+	case ip::mproto::pba::status_insufficient_resources:             return "insufficient resources"; break;
+	case ip::mproto::pba::status_hr_not_supported:                   return "home registration not supported"; break;
+	case ip::mproto::pba::status_not_home_subnet:                    return "not home subnet"; break;
+	case ip::mproto::pba::status_not_home_agent:                     return "not home agent for this mobile node"; break;
+	case ip::mproto::pba::status_duplicate_address:                  return "duplicate Address Detection failed"; break;
+	case ip::mproto::pba::status_bad_sequence:                       return "sequence number out of window"; break;
+	case ip::mproto::pba::status_expired_home:                       return "expired home nonce index"; break;
+	case ip::mproto::pba::status_expired_care_of:                    return "expired care-of nonce index"; break;
+	case ip::mproto::pba::status_expired:                            return "expired nonces"; break;
+	case ip::mproto::pba::status_invalid_registration:               return "registration type change disallowed"; break;
+	case ip::mproto::pba::status_not_lma_for_this_mn:                return "not local mobility anchor for this mobile node"; break;
+	case ip::mproto::pba::status_not_authorized_for_proxy_reg:       return "the mobile access gateway is not authorized to send proxy binding updates"; break;
+	case ip::mproto::pba::status_not_authorized_for_net_prefix:      return "the mobile node is not authorized for one or more of the requesting home network prefixes"; break;
+	case ip::mproto::pba::status_timestamp_missmatch:                return "invalid timestamp value (the clocks are out of sync)"; break;
+	case ip::mproto::pba::status_timestamp_lower_than_prev_accepted: return "the timestamp value is lower than the previously accepted value"; break;
+	case ip::mproto::pba::status_missing_home_network_prefix:        return "missing home network prefix option"; break;
+	case ip::mproto::pba::status_bce_pbu_prefix_do_not_match:        return "the home network prefixes listed in the BCE do not match the prefixes in the received PBU"; break;
+	case ip::mproto::pba::status_missing_mn_identifier_option:       return "missing mobile node identifier option"; break;
+	case ip::mproto::pba::status_missing_handoff_indicator_option:   return "missing handoff indicator option"; break;
+	case ip::mproto::pba::status_missing_access_type_tech_option:    return "missing access technology type"; break;
+	}
+
+	return std::string();
+}
+
+///////////////////////////////////////////////////////////////////////////////
+const char* cmd::error_category::name() const
+{
+	return "opmip::pmip::maar error codes";
+}
+
+std::string cmd::error_category::message(int ev) const
+{
+	switch (ev) {
+	case ec_success:        return "success"; break;
+	case ec_not_authorized: return "not authorized"; break;
+	case ec_unknown_lma:    return "unknown lma"; break;
+	case ec_invalid_state:  return "invalid binding state"; break;
+	case ec_canceled:       return "binding canceled"; break;
+	case ec_timeout:        return "timeout"; break;
+	}
+
+	return std::string();
+}
+
 ///////////////////////////////////////////////////////////////////////////////
 bool validate_sequence_number(uint16 prev, uint16 current)
 {
@@ -40,6 +122,7 @@ cmd::cmd(boost::asio::io_service& ios, node_db& ndb, size_t concurrency)
 	: _service(ios), _node_db(ndb), _log("CMD", std::cout), _mp_sock(ios),
 	  _tunnels(ios), _route_table(ios), _concurrency(concurrency)
 {
+	_service.dispatch(boost::bind(&cmd::stop_, this));
 }
 
 void cmd::start(const std::string& id, bool tunnel_global_address)
@@ -74,9 +157,11 @@ void cmd::start_(const std::string& id, bool tunnel_global_address)
 {
 	const router_node* node = _node_db.find_router(id);
 	if (!node) {
-		error_code ec(boost::system::errc::invalid_argument, boost::system::get_generic_category());
+		//error_code ec(boost::system::errc::invalid_argument, boost::system::get_generic_category());
 
-		throw_exception(exception(ec, "CMD id not found in node database"));
+		//throw_exception(exception(ec, "CMD id not found in node database"));
+		// TODO: make it throw an exception (or smth else that works nice)
+		return;
 	}
 	_log(0, "Started [id = ", id, ", address = ", node->address(), "]");
 
@@ -85,9 +170,9 @@ void cmd::start_(const std::string& id, bool tunnel_global_address)
 
 	_identifier = id;
 
-	//!Chanhed
-	//_tunnels.open(ip::address_v6(node->address().to_bytes(), node->device_id()), tunnel_global_address);
+	_tunnels.open(ip::address_v6(node->address().to_bytes(), node->device_id()), tunnel_global_address);
 
+	//receive PBUs
 	for (size_t i = 0; i < _concurrency; ++i) {
 		pbu_receiver_ptr pbur(new pbu_receiver());
 
@@ -100,9 +185,50 @@ void cmd::stop_()
 	_bcache.clear();
 	_mp_sock.close();
 	_route_table.clear();
-	//!Changed
-	//_tunnels.close();
+	_tunnels.close();
 }
+
+// 1 - Receive PBU from S-MAAR
+/*void cmd::receive_pbu_from_smaar()
+{
+
+}*/
+
+// 2 - Check/Update BCE
+/*bcache_entry* 	cmd::check_update_bce(proxy_binding_info& pbinfo)
+{
+	return nullptr;
+}*/
+
+// 3 - Send (Forward) PBU* to P-MAARs (proxy CoA) and updates P-CoA on BCE
+/*void cmd::send_pbu_to_pmaar()
+{
+
+}*/
+
+// 4 - Receive PBA* from P-MAARs
+/*void cmd::receive_pba_from_pmaar()
+{
+
+}*/
+
+// 5 - Update BCE with a P-MAAR list (additional field on BCE)
+//			Contains: one element for each P-MAAR involved in mobility of MN
+//				Contains: 	P-MAARs' global address
+//							Delegated prefi
+/*void cmd::update_bce_with_pmaar_list()
+{
+
+}*/
+
+// 6 - Send PBA* tor S-MAAR
+//		Contains:	previous P-CoA
+//					prefix anchored to it embeded into a new mobility option (previous MAAR)
+//					(see 3.6.1 on draft)
+/*void cmd::send_pba_to_smaar()
+{
+
+}*/
 
 
 void cmd::proxy_binding_ack(const proxy_binding_info& pbinfo, chrono& delay)
@@ -137,10 +263,10 @@ void cmd::proxy_binding_ack(const proxy_binding_info& pbinfo, chrono& delay)
 
 		pbu_sender_ptr pbus(new pbu_sender(pbinfo));
 
-		pbus->async_send(_mp_sock, boost::bind(&mag::mp_send_handler, this, _1));
+		pbus->async_send(_mp_sock, boost::bind(&cmd::mp_send_handler, this, _1));
 		be->timer.cancel();
 		be->timer.expires_from_now(boost::posix_time::milliseconds(1500));
-		be->timer.async_wait(_service.wrap(boost::bind(&mag::proxy_binding_retry, this, _1, pbinfo)));
+		be->timer.async_wait(_service.wrap(boost::bind(&cmd::proxy_binding_retry, this, _1, pbinfo)));
 
 		return;
 	}
@@ -159,8 +285,9 @@ void cmd::proxy_binding_ack(const proxy_binding_info& pbinfo, chrono& delay)
 		boost::system::error_code ec;
 
 		if (pbinfo.status == ip::mproto::pba::status_ok) {
-			if (be->bind_status == bulist_entry::k_bind_requested)
-				add_route_entries(*be);
+			//if (be->bind_status == bulist_entry::k_bind_requested)
+			//	add_route_entries(*be);
+			//continue;
 		} else {
 			ec = boost::system::error_code(pbinfo.status, pba_error_category());
 		}
@@ -189,7 +316,7 @@ void cmd::proxy_binding_ack(const proxy_binding_info& pbinfo, chrono& delay)
 			uint expire = (pbinfo.lifetime <= 6) ? pbinfo.lifetime - 1 : pbinfo.lifetime - 3; //FIXME Check used values
 
 			be->timer.expires_from_now(boost::posix_time::seconds(expire));
-			be->timer.async_wait(_service.wrap(boost::bind(&mag::proxy_binding_renew, this, _1, pbinfo.id)));
+			be->timer.async_wait(_service.wrap(boost::bind(&cmd::proxy_binding_renew, this, _1, pbinfo.id)));
 		} else {
 			_bulist.remove(be);
 		}
@@ -241,7 +368,7 @@ void cmd::proxy_binding_retry(const boost::system::error_code& ec, proxy_binding
 	++be->retry_count;
 
 	if (be->bind_status == bulist_entry::k_bind_detach && be->retry_count > 3) {
-		report_completion(_service, be->completion, boost::system::error_code(ec_timeout, mag_error_category()));
+		report_completion(_service, be->completion, boost::system::error_code(ec_timeout, cmd_error_category()));
 		_log(0, "PBU retry error: max retry count [id = ", pbinfo.id, ", cmd = ", pbinfo.address, "]");
 		_bulist.remove(be);
 		return;
@@ -250,9 +377,9 @@ void cmd::proxy_binding_retry(const boost::system::error_code& ec, proxy_binding
 	pbu_sender_ptr pbus(new pbu_sender(pbinfo));
 	double         delay = std::min<double>(32, std::pow(1.5f, be->retry_count)); //FIXME: validate
 
-	pbus->async_send(_mp_sock, boost::bind(&mag::mp_send_handler, this, _1));
+	pbus->async_send(_mp_sock, boost::bind(&cmd::mp_send_handler, this, _1));
 	be->timer.expires_from_now(boost::posix_time::milliseconds(delay * 1000.f));
-	be->timer.async_wait(_service.wrap(boost::bind(&mag::proxy_binding_retry, this, _1, pbinfo)));
+	be->timer.async_wait(_service.wrap(boost::bind(&cmd::proxy_binding_retry, this, _1, pbinfo)));
 
 	if (pbinfo.lifetime)
 		_log(0, "PBU register retry [id = ", pbinfo.id,
@@ -268,7 +395,7 @@ void cmd::proxy_binding_retry(const boost::system::error_code& ec, proxy_binding
 			                         ", delay = ", delay, "]");
 }
 
-void mag::proxy_binding_renew(const boost::system::error_code& ec, const std::string& id)
+void cmd::proxy_binding_renew(const boost::system::error_code& ec, const std::string& id)
 {
 	if (ec) {
 		 if (ec != boost::system::errc::make_error_condition(boost::system::errc::operation_canceled))
@@ -296,22 +423,34 @@ void mag::proxy_binding_renew(const boost::system::error_code& ec, const std::st
 
 	be->bind_status = bulist_entry::k_bind_renewing;
 	be->retry_count = 0;
-	pbus->async_send(_mp_sock, boost::bind(&mag::mp_send_handler, this, _1));
+	pbus->async_send(_mp_sock, boost::bind(&cmd::mp_send_handler, this, _1));
 	be->timer.expires_from_now(boost::posix_time::milliseconds(1500));
-	be->timer.async_wait(_service.wrap(boost::bind(&mag::proxy_binding_retry, this, _1, pbinfo)));
+	be->timer.async_wait(_service.wrap(boost::bind(&cmd::proxy_binding_retry, this, _1, pbinfo)));
 }
+
+/////////////////////////////// END ADDED METHODS /////////////////////////////////
+
 
 void cmd::proxy_binding_update(proxy_binding_info& pbinfo, chrono& delay)
 {
+	//check if PBA is OK
 	if (pbinfo.status != ip::mproto::pba::status_ok)
 		return; //error
 
+	//process PBU
 	pbu_process(pbinfo);
 
-	pba_sender_ptr pbas(new pba_sender(pbinfo));
+	//Changed
+	//pba_sender_ptr pbas(new pba_sender(pbinfo));
+	//and async send PBA
+	//pbas->async_send(_mp_sock, boost::bind(&cmd::mp_send_handler, this, _1));
 
-	pbas->async_send(_mp_sock, boost::bind(&cmd::mp_send_handler, this, _1));
+	//in DMM, CMD send a PBU* to pMAAR (with smaar) option
+	pbu_sender_ptr pbus(new pbu_sender(pbinfo));
+	pbus->async_send(_mp_sock, boost::bind(&cmd::mp_send_handler, this, _1));
+	
 
+	//finally, stops the delay counter
 	delay.stop();
 	_log(0, "PBU ", !pbinfo.lifetime ? "de-" : "", "register processing delay ", delay.get());
 }
@@ -414,7 +553,7 @@ bool cmd::pbu_maar_checkin(bcache_entry& be, proxy_binding_info& pbinfo)
 
 void cmd::pbu_process(proxy_binding_info& pbinfo)
 {
-	bcache_entry* be = pbu_get_be(pbinfo);
+	bcache_entry* be = pbu_get_bce(pbinfo);
 	if (!be)
 		return;
 
@@ -509,7 +648,6 @@ void cmd::add_route_entries(bcache_entry* be)
 	//TODO: change to foreach!?
 	for (bcache::net_prefix_list::const_iterator i = npl.begin(), e = npl.end(); i != e; ++i)
 		_route_table.add_by_dst(*i, tdev);
-
 	delay.stop();
 	_log(0, "Add route entries delay ", delay.get());
 }

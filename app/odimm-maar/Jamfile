@@ -15,16 +15,18 @@
 # This software is distributed without any warranty.
 #==============================================================================
 
-#project opmip/odimm
+#project odimm
 #	;
 
-exe odimm
+exe odimm-maar
 	: main.cpp
-	  /boost//headers
+	  options.cpp
+	  ../../lib/odimm
 	  /boost//thread
-	  ../../lib/opmip
+	  /boost//program_options
 	;
 
 install install
-	: odimm
-	: <location>../../dist ;
+	: odimm-maar
+	: <location>../../dist 
+	;

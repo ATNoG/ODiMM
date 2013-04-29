@@ -16,11 +16,11 @@
 // This software is distributed without any warranty.
 //=============================================================================
 
-#include <opmip/exception.hpp>
-#include <opmip/pmip/maar.hpp>
-#include <opmip/pmip/mp_sender.hpp>
-#include <opmip/pmip/icmp_sender.hpp>
-#include <opmip/ip/icmp.hpp>
+#include <odimm/exception.hpp>
+#include <odimm/pmip/maar.hpp>
+#include <odimm/pmip/mp_sender.hpp>
+#include <odimm/pmip/icmp_sender.hpp>
+#include <odimm/ip/icmp.hpp>
 #include <boost/asio/ip/unicast.hpp>
 #include <boost/asio/ip/multicast.hpp>
 #include <boost/bind.hpp>
@@ -28,7 +28,7 @@
 #include <cmath>
 
 ///////////////////////////////////////////////////////////////////////////////
-namespace odimm { namespace pmip {
+namespace opmip { namespace pmip {
 
 ///////////////////////////////////////////////////////////////////////////////
 static const error_category      k_pba_error_category;
@@ -91,6 +91,14 @@ std::string error_category::message(int ev) const
 	}
 
 	return std::string();
+}
+
+///////////////////////////////////////////////////////////////////////////////
+bool validate_sequence_number(uint16 prev, uint16 current)
+{
+	return prev < 32768 ?
+		((current > prev) && (current < (prev + 32768))) :
+		((current > prev) || (current < (prev - 32768)));
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -184,6 +192,7 @@ void maar::stop_()
 	_bulist.clear();
 	_addrconf.clear();
 	_addrconf.stop();
+	_bcache.clear();
 	_mp_sock.close();
 	_route_table.clear();
 	_tunnels.close();
@@ -204,28 +213,28 @@ void maar::mobile_node_attach_(const attach_info& ai, completion_functor& comple
 			return;
 		}
 
-		const router_node* lma = _node_db.find_router(mn->lma_id());
-		if (!lma) {
+		const router_node* cmd = _node_db.find_router(mn->cmd_id());
+		if (!cmd) {
 			report_completion(_service, completion_handler, boost::system::error_code(ec_unknown_lma, maar_error_category()));
-			_log(0, "Mobile Node attach error: unknown LMA [id = ", mn->id(), " (", ai.mn_address, "), lma = ", mn->lma_id(), "]");
+			_log(0, "Mobile Node attach error: unknown CMD [id = ", mn->id(), " (", ai.mn_address, "), cmd = ", mn->cmd_id(), "]");
 			return;
 		}
 
 		be = new bulist_entry(_service.get_io_service(), mn->id(),
 		                      ai.mn_address, mn->prefix_list(), mn->home_address(),
-		                      lma->address(), ai.poa_dev_id, ai.poa_address);
+		                      cmd->address(), ai.poa_dev_id, ai.poa_address);
 
 		_bulist.insert(be);
 		_log(0, "Mobile Node attach [id = ", mn->id(), " (", ai.mn_address, ")"
-		                          ", lma = ", mn->lma_id(), " (", be->lma_address(), ")]");
+		                          ", cmd = ", mn->cmd_id(), " (", be->cmd_address(), ")]");
 	} else {
-		_log(0, "Mobile Node re-attach [id = ", be->mn_id(), " (", ai.mn_address, "), lma = ", be->lma_address(), "]");
+		_log(0, "Mobile Node re-attach [id = ", be->mn_id(), " (", ai.mn_address, "), cmd = ", be->cmd_address(), "]");
 	}
 
 	if (be->bind_status == bulist_entry::k_bind_error) {
 		report_completion(_service, completion_handler, boost::system::error_code(ec_invalid_state, maar_error_category()));
 		_log(0, "Mobile Node attach error: previous bind failed [id = ", be->mn_id(), "(", ai.mn_address, ")",
-				                                               " (previous = ", be->mn_id(), "), lma = ", be->lma_address(), "]");
+				                                               " (previous = ", be->mn_id(), "), cmd = ", be->cmd_address(), "]");
 		return;
 	}
 
@@ -233,7 +242,7 @@ void maar::mobile_node_attach_(const attach_info& ai, completion_functor& comple
 
 	be->handover_delay.start(); //begin chrono handover delay
 	pbinfo.id = be->mn_id();
-	pbinfo.address = be->lma_address();
+	pbinfo.address = be->cmd_address();
 	pbinfo.sequence = ++be->sequence_number;
 	pbinfo.lifetime = be->lifetime;
 	pbinfo.prefix_list = be->mn_prefix_list();
@@ -272,7 +281,7 @@ void maar::mobile_node_detach_(const attach_info& ai, completion_functor& comple
 		_log(0, "Mobile Node detach error: not attached [id = ", mn->id(), " (", ai.mn_address, ")", "]");
 		return;
 	}
-	_log(0, "Mobile Node detach [id = ", mn->id(), " (", ai.mn_address, "), lma = ", be->lma_address(), "]");
+	_log(0, "Mobile Node detach [id = ", mn->id(), " (", ai.mn_address, "), cmd = ", be->cmd_address(), "]");
 
 	if (be->bind_status == bulist_entry::k_bind_ack)
 		del_route_entries(*be);
@@ -281,7 +290,7 @@ void maar::mobile_node_detach_(const attach_info& ai, completion_functor& comple
 
 	be->handover_delay.start(); //begin chrono handover delay
 	pbinfo.id = be->mn_id();
-	pbinfo.address = be->lma_address();
+	pbinfo.address = be->cmd_address();
 	pbinfo.sequence = ++be->sequence_number;
 	pbinfo.lifetime = 0;
 	pbinfo.prefix_list = be->mn_prefix_list();
@@ -305,18 +314,18 @@ void maar::proxy_binding_ack(const proxy_binding_info& pbinfo, chrono& delay)
 {
 	bulist_entry* be = _bulist.find(pbinfo.id);
 	if (!be) {
-		_log(0, "PBA error: binding update list entry not found [id = ", pbinfo.id, ", lma = ", pbinfo.address, "]");
+		_log(0, "PBA error: binding update list entry not found [id = ", pbinfo.id, ", cmd = ", pbinfo.address, "]");
 		return;
 	}
 
-	if (be->lma_address() != pbinfo.address) {
-		_log(0, "PBA error: not this LMA [id = ", pbinfo.id, ", lma = ", pbinfo.address, "]");
+	if (be->cmd_address() != pbinfo.address) {
+		_log(0, "PBA error: not this CMD [id = ", pbinfo.id, ", cmd = ", pbinfo.address, "]");
 		return;
 	}
 
 	if (pbinfo.status == ip::mproto::pba::status_bad_sequence) {
 		_log(0, "PBA error: bad sequence number [id = ", pbinfo.id,
-		                                      ", lma = ", pbinfo.address,
+		                                      ", cmd = ", pbinfo.address,
 		                                      ", sequence = ", be->sequence_number,
 		                                      ", last accepted sequence = ", pbinfo.sequence, "]");
 
@@ -325,7 +334,7 @@ void maar::proxy_binding_ack(const proxy_binding_info& pbinfo, chrono& delay)
 		proxy_binding_info pbinfo;
 
 		pbinfo.id = be->mn_id();
-		pbinfo.address = be->lma_address();
+		pbinfo.address = be->cmd_address();
 		pbinfo.handoff = ip::mproto::option::handoff::k_unknown;
 		pbinfo.sequence = ++be->sequence_number;
 		pbinfo.lifetime = (be->bind_status != bulist_entry::k_bind_detach) ? be->lifetime : 0;
@@ -343,7 +352,7 @@ void maar::proxy_binding_ack(const proxy_binding_info& pbinfo, chrono& delay)
 
 	if (pbinfo.sequence != be->sequence_number) {
 		_log(0, "PBA error: sequence number invalid [id = ", pbinfo.id,
-		                                          ", lma = ", pbinfo.address,
+		                                          ", cmd = ", pbinfo.address,
 		                                          ", sequence = ", pbinfo.sequence,
 		                                                   " != ", be->sequence_number, "]");
 		return;
@@ -368,12 +377,12 @@ void maar::proxy_binding_ack(const proxy_binding_info& pbinfo, chrono& delay)
 			report_completion(_service, be->completion, ec);
 			_log(0, "PBA registration [delay = ", be->handover_delay.get(),
 			                        ", id = ", pbinfo.id,
-			                        ", lma = ", pbinfo.address,
+			                        ", cmd = ", pbinfo.address,
 			                        ", status = ", pbinfo.status, "]");
 		} else {
 			_log(0, "PBA re-registration [delay = ", be->handover_delay.get(),
 			                           ", id = ", pbinfo.id,
-			                           ", lma = ", pbinfo.address,
+			                           ", cmd = ", pbinfo.address,
 			                           ", status = ", pbinfo.status, "]");
 		}
 
@@ -405,7 +414,7 @@ void maar::proxy_binding_ack(const proxy_binding_info& pbinfo, chrono& delay)
 		report_completion(_service, be->completion, ec);
 		_log(0, "PBA de-registration [delay = ", be->handover_delay.get(),
 		                           ", id = ", pbinfo.id,
-		                           ", lma = ", pbinfo.address, "]");
+		                           ", cmd = ", pbinfo.address, "]");
 
 		_bulist.remove(be);
 
@@ -413,7 +422,7 @@ void maar::proxy_binding_ack(const proxy_binding_info& pbinfo, chrono& delay)
 		_log(0, "PBA de-register process delay ", delay.get());
 
 	} else {
-		_log(0, "PBA ignored [id = ", pbinfo.id, ", lma = ", pbinfo.address, ", status = ", be->bind_status, "]");
+		_log(0, "PBA ignored [id = ", pbinfo.id, ", cmd = ", pbinfo.address, ", status = ", be->bind_status, "]");
 	}
 }
 
@@ -430,7 +439,7 @@ void maar::proxy_binding_retry(const boost::system::error_code& ec, proxy_bindin
 	if (!be || (be->bind_status != bulist_entry::k_bind_requested
 		        && be->bind_status != bulist_entry::k_bind_renewing
 			    && be->bind_status != bulist_entry::k_bind_detach)) {
-		_log(0, "PBU retry error: binding update list entry not found [id = ", pbinfo.id, ", lma = ", pbinfo.address, "]");
+		_log(0, "PBU retry error: binding update list entry not found [id = ", pbinfo.id, ", cmd = ", pbinfo.address, "]");
 		return;
 	}
 
@@ -438,7 +447,7 @@ void maar::proxy_binding_retry(const boost::system::error_code& ec, proxy_bindin
 
 	if (be->bind_status == bulist_entry::k_bind_detach && be->retry_count > 3) {
 		report_completion(_service, be->completion, boost::system::error_code(ec_timeout, maar_error_category()));
-		_log(0, "PBU retry error: max retry count [id = ", pbinfo.id, ", lma = ", pbinfo.address, "]");
+		_log(0, "PBU retry error: max retry count [id = ", pbinfo.id, ", cmd = ", pbinfo.address, "]");
 		_bulist.remove(be);
 		return;
 	}
@@ -452,13 +461,13 @@ void maar::proxy_binding_retry(const boost::system::error_code& ec, proxy_bindin
 
 	if (pbinfo.lifetime)
 		_log(0, "PBU register retry [id = ", pbinfo.id,
-			                      ", lma = ", pbinfo.address,
+			                      ", cmd = ", pbinfo.address,
 			                      ", sequence = ", pbinfo.sequence,
 			                      ", retry_count = ", uint(be->retry_count),
 			                      ", delay = ", delay, "]");
 	else
 		_log(0, "PBU de-register retry [id = ", pbinfo.id,
-			                         ", lma = ", pbinfo.address,
+			                         ", cmd = ", pbinfo.address,
 			                         ", sequence = ", pbinfo.sequence,
 			                         ", retry_count = ", uint(be->retry_count),
 			                         ", delay = ", delay, "]");
@@ -483,7 +492,7 @@ void maar::proxy_binding_renew(const boost::system::error_code& ec, const std::s
 
 	be->handover_delay.start(); //begin chrono handover delay
 	pbinfo.id = be->mn_id();
-	pbinfo.address = be->lma_address();
+	pbinfo.address = be->cmd_address();
 	pbinfo.sequence = ++be->sequence_number;
 	pbinfo.lifetime = be->lifetime;
 	pbinfo.prefix_list = be->mn_prefix_list();
@@ -507,7 +516,7 @@ void maar::proxy_binding_update(proxy_binding_info& pbinfo, chrono& delay)
 
 	pba_sender_ptr pbas(new pba_sender(pbinfo));
 
-	pbas->async_send(_mp_sock, boost::bind(&lma::mp_send_handler, this, _1));
+	pbas->async_send(_mp_sock, boost::bind(&maar::mp_send_handler, this, _1));
 
 	delay.stop();
 	_log(0, "PBU ", !pbinfo.lifetime ? "de-" : "", "register processing delay ", delay.get());
@@ -534,8 +543,8 @@ bcache_entry* maar::pbu_get_be(proxy_binding_info& pbinfo)
 		return nullptr;
 	}
 
-	if (mn->lma_id() != _identifier) {
-		_log(0, "PBU registration error: not this LMA [id = ", pbinfo.id, ", maar = ", pbinfo.address, "]");
+	if (mn->cmd_id() != _identifier) {
+		_log(0, "PBU registration error: not this CMD [id = ", pbinfo.id, ", maar = ", pbinfo.address, "]");
 		pbinfo.status = ip::mproto::pba::status_not_lma_for_this_mn;
 		return nullptr;
 	}
@@ -620,7 +629,7 @@ void maar::pbu_process(proxy_binding_info& pbinfo)
 		add_route_entries(be);
 
 		be->timer.expires_from_now(boost::posix_time::seconds(pbinfo.lifetime));
-		be->timer.async_wait(_service.wrap(boost::bind(&lma::expired_entry, this, _1, be->id())));
+		be->timer.async_wait(_service.wrap(boost::bind(&maar::expired_entry, this, _1, be->id())));
 	}
 
 	BOOST_ASSERT((be->bind_status != bcache_entry::k_bind_unknown));
@@ -634,7 +643,7 @@ void maar::pbu_process(proxy_binding_info& pbinfo)
 		be->care_of_address = ip::address_v6();
 
 		be->timer.expires_from_now(boost::posix_time::milliseconds(_config.min_delay_before_BCE_delete));
-		be->timer.async_wait(_service.wrap(boost::bind(&lma::remove_entry, this, _1, be->id())));
+		be->timer.async_wait(_service.wrap(boost::bind(&maar::remove_entry, this, _1, be->id())));
 	}
 }
 
@@ -646,9 +655,9 @@ void maar::add_route_entries(bulist_entry& be)
 
 	const bulist::ip_prefix_list& npl = be.mn_prefix_list();
 	uint adev = be.poa_dev_id();
-	uint tdev = _tunnels.get(be.lma_address());
+	uint tdev = _tunnels.get(be.cmd_address());
 
-	_log(0, "Add route entries [id = ", be.mn_id(), ", tunnel = ", tdev, ", LMA = ", be.lma_address(), "]");
+	_log(0, "Add route entries [id = ", be.mn_id(), ", tunnel = ", tdev, ", CMD = ", be.cmd_address(), "]");
 
 	for (bulist::ip_prefix_list::const_iterator i = npl.begin(), e = npl.end(); i != e; ++i)
 		_route_table.add_by_dst(*i, adev);
@@ -681,7 +690,7 @@ void maar::del_route_entries(bulist_entry& be)
 
 	const bulist::ip_prefix_list& npl = be.mn_prefix_list();
 
-	_log(0, "Remove route entries [id = ", be.mn_id(), ", LMA = ", be.lma_address(), "]");
+	_log(0, "Remove route entries [id = ", be.mn_id(), ", CMD = ", be.cmd_address(), "]");
 
 	for (bulist::ip_prefix_list::const_iterator i = npl.begin(), e = npl.end(); i != e; ++i)
 		_route_table.remove_by_dst(*i);
@@ -689,8 +698,93 @@ void maar::del_route_entries(bulist_entry& be)
 	for (bulist::ip_prefix_list::const_iterator i = npl.begin(), e = npl.end(); i != e; ++i)
 		_route_table.remove_by_src(*i);
 
-	_tunnels.del(be.lma_address());
+	_tunnels.del(be.cmd_address());
 	_addrconf.del(be.mn_link_address());
+
+	delay.stop();
+	_log(0, "Remove route entries delay ", delay.get());
+}
+
+
+
+void maar::expired_entry(const boost::system::error_code& ec, const std::string& mn_id)
+{
+	if (ec) {
+		if (ec != boost::system::errc::make_error_condition(boost::system::errc::operation_canceled))
+			_log(0, "Binding cache expired entry timer error: ", ec.message());
+
+		return;
+	}
+
+	bcache_entry* be = _bcache.find(mn_id);
+	if (!be || be->bind_status != bcache_entry::k_bind_registered) {
+		_log(0, "Binding cache expired entry error: not found [id = ", mn_id, "]");
+		return;
+	}
+	_log(0, "Binding expired entry [id = ", mn_id, "]");
+
+	be->bind_status = bcache_entry::k_bind_deregistered;
+
+	be->timer.expires_from_now(boost::posix_time::milliseconds(_config.min_delay_before_BCE_delete));
+	be->timer.async_wait(_service.wrap(boost::bind(&maar::remove_entry, this, _1, be->id())));
+}
+
+void maar::remove_entry(const boost::system::error_code& ec, const std::string& mn_id)
+{
+	if (ec) {
+		if (ec != boost::system::errc::make_error_condition(boost::system::errc::operation_canceled))
+			_log(0, "Binding cache remove entry timer error: ", ec.message());
+
+		return;
+	}
+
+	bcache_entry* be = _bcache.find(mn_id);
+	if (!be || be->bind_status != bcache_entry::k_bind_deregistered) {
+		_log(0, "Binding cache remove entry error: not found [id = ", mn_id, "]");
+		return;
+	}
+	_log(0, "Binding cache remove entry [id = ", mn_id, "]");
+
+	_bcache.remove(be);
+}
+
+//! function overloading
+// TODO: New Name???
+void maar::add_route_entries(bcache_entry* be)
+{
+	chrono delay;
+
+	delay.start();
+
+	const bcache::net_prefix_list& npl = be->prefix_list();
+	uint tdev = _tunnels.get(be->care_of_address);
+
+	_log(0, "Add route entries [id = ", be->id(), ", tunnel = ", tdev, ", CoA = ", be->care_of_address, "]");
+
+	//TODO: change to foreach!?
+	for (bcache::net_prefix_list::const_iterator i = npl.begin(), e = npl.end(); i != e; ++i)
+		_route_table.add_by_dst(*i, tdev);
+
+	delay.stop();
+	_log(0, "Add route entries delay ", delay.get());
+}
+
+//! function overloading
+// TODO: New Name???
+void maar::del_route_entries(bcache_entry* be)
+{
+	chrono delay;
+
+	delay.start();
+
+	const bcache::net_prefix_list& npl = be->prefix_list();
+
+	_log(0, "Remove route entries [id = ", be->id(), ", CoA = ", be->care_of_address, "]");
+
+	for (bcache::net_prefix_list::const_iterator i = npl.begin(), e = npl.end(); i != e; ++i)
+		_route_table.remove_by_dst(*i);
+
+	_tunnels.del(be->care_of_address);
 
 	delay.stop();
 	_log(0, "Remove route entries delay ", delay.get());

@@ -19,21 +19,22 @@
 #define OPMIP_PMIP_maar__HPP_
 
 ///////////////////////////////////////////////////////////////////////////////
-#include <opmip/base.hpp>
-#include <opmip/logger.hpp>
+#include <odimm/base.hpp>
+#include <odimm/logger.hpp>
 #include <odimm/pmip/bulist.hpp>
 #include <odimm/pmip/node_db.hpp>
-#include <opmip/pmip/mp_receiver.hpp>
-#include <opmip/pmip/tunnels.hpp>
-#include <opmip/pmip/addrconf_server.hpp>
-#include <opmip/sys/route_table.hpp>
+#include <odimm/pmip/mp_receiver.hpp>
+#include <odimm/pmip/tunnels.hpp>
+#include <odimm/pmip/addrconf_server.hpp>
+#include <odimm/sys/route_table.hpp>
 #include <boost/asio/io_service.hpp>
 #include <boost/asio/strand.hpp>
 #include <boost/asio/ip/icmp.hpp>
 #include <boost/bind.hpp>
+#include <odimm/pmip/bcache.hpp>
 
 ///////////////////////////////////////////////////////////////////////////////
-namespace odimm { namespace pmip {
+namespace opmip { namespace pmip {
 
 ///////////////////////////////////////////////////////////////////////////////
 class error_category : public boost::system::error_category {
@@ -49,6 +50,19 @@ public:
 class maar {
 	typedef boost::asio::io_service::strand                         strand;
 	typedef boost::function<void(const boost::system::error_code&)> completion_functor;
+
+// ADDED config struct
+public:	
+	struct config {
+		config()
+			: min_delay_before_BCE_delete(10000),
+			  max_delay_before_BCE_assign(1500)
+		{ }
+
+		uint min_delay_before_BCE_delete; //MinDelayBeforeBCEDelete (ms)
+		uint max_delay_before_BCE_assign; //MaxDelayBeforeNewBCEAssign (ms)
+	};
+
 
 public:
 	typedef ip::address_v6  ip_address;
@@ -138,6 +152,12 @@ private:
 	void add_route_entries(bulist_entry& be);
 	void del_route_entries(bulist_entry& be);
 
+	void expired_entry(const boost::system::error_code& ec, const std::string& mn_id);
+	void remove_entry (const boost::system::error_code& ec, const std::string& mn_id);
+
+	void add_route_entries(bcache_entry* be);
+	void del_route_entries(bcache_entry* be);
+
 private:
 	strand   _service;
 	bulist   _bulist;
@@ -156,6 +176,7 @@ private:
 	//!Changed
 	// local binding cache for the attached MNs 
 	bcache   _bcache;
+	config   _config;
 };
 
 template<class CompletionHandler>

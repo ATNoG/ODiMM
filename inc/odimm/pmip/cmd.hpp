@@ -22,24 +22,53 @@
 #define OPMIP_PMIP_CMD__HPP_
 
 ///////////////////////////////////////////////////////////////////////////////
-#include <opmip/base.hpp>
-#include <opmip/chrono.hpp>
-#include <opmip/logger.hpp>
-#include <opmip/ip/mproto.hpp>
-#include <opmip/pmip/bcache.hpp>
+#include <odimm/base.hpp>
+#include <odimm/chrono.hpp>
+#include <odimm/logger.hpp>
+#include <odimm/ip/mproto.hpp>
+#include <odimm/pmip/bcache.hpp>
 #include <odimm/pmip/node_db.hpp>
-#include <opmip/pmip/mp_receiver.hpp>
-#include <opmip/pmip/tunnels.hpp>
-#include <opmip/sys/route_table.hpp>
+#include <odimm/pmip/mp_receiver.hpp>
+#include <odimm/pmip/tunnels.hpp>
+#include <odimm/sys/route_table.hpp>
 #include <boost/asio/io_service.hpp>
 #include <boost/asio/strand.hpp>
+#include <odimm/pmip/bulist.hpp>
 
 ///////////////////////////////////////////////////////////////////////////////
-namespace odimm { namespace pmip {
+namespace opmip { namespace pmip {
+
+class error_category : public boost::system::error_category {
+public:
+	error_category()
+	{ }
+
+	const char* name() const;
+	std::string message(int ev) const;
+};
 
 ///////////////////////////////////////////////////////////////////////////////
 class cmd {
 	typedef boost::asio::io_service::strand strand;
+
+public:
+	class error_category : public boost::system::error_category {
+	public:
+		error_category()
+		{ }
+
+		const char* name() const;
+		std::string message(int ev) const;
+	};
+
+	enum error_code {
+		ec_success,
+		ec_not_authorized,
+		ec_unknown_lma,
+		ec_invalid_state,
+		ec_canceled,
+		ec_timeout,
+	};
 
 public:
 	typedef	ip::address_v6 ip_address;
@@ -71,23 +100,23 @@ private:
 	void stop_();
 
 	// 1 - Receive PBU from S-MAAR
-	void receive_pbu_from_smaar();
+	//void receive_pbu_from_smaar();
 	// 2 - Check/Update BCE
-	bcache_entry* 	check_update_bce(proxy_binding_info& pbinfo);
+	//bcache_entry* 	check_update_bce(proxy_binding_info& pbinfo);
 	// 3 - Send (Forward) PBU* to P-MAARs (proxy CoA) and updates P-CoA on BCE
-	void send_pbu_to_pmaar();
+	//void send_pbu_to_pmaar();
 	// 4 - Receive PBA* from P-MAARs
-	void receive_pba_from_pmaar();
+	//void receive_pba_from_pmaar();
 	// 5 - Update BCE with a P-MAAR list (additional field on BCE)
 	//			Contains: one element for each P-MAAR involved in mobility of MN
 	//				Contains: 	P-MAARs' global address
 	//							Delegated prefi
-	void update_bce_with_pmaar_list();
-	// 6 - Send PBA* to S-MAAR
+	//void update_bce_with_pmaar_list();
+	// 6 - Send PBA* tor S-MAAR
 	//		Contains:	previous P-CoA
 	//					prefix anchored to it embeded into a new mobility option (previous MAAR)
 	//					(see 3.6.1 on draft)
-	void send_pba_to_smaar();
+	//void send_pba_to_smaar();
 	//---------------------------------------------------------------------------------------
 	// !Changed
 	// The (3) following methods were introduced in order to provide the functionality of
@@ -115,6 +144,7 @@ private:
 	config   _config;
 	node_db& _node_db;
 	logger   _log;
+	bulist   _bulist;
 
 	ip::mproto::socket _mp_sock;
 

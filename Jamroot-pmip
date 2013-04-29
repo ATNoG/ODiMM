@@ -19,7 +19,7 @@ import os ;
 import option ;
 import path ;
 
-project odimm
+project opmip
 	: requirements
 		<include>inc
 		<link>static
@@ -36,7 +36,7 @@ project odimm
 path-constant TOP : . ;
 
 local boost-major = 1 ;
-local boost-minor = 51 ;
+local boost-minor = 49 ;
 local boost-patch = 0 ;
 local boost-root ;
 
@@ -53,6 +53,16 @@ if ! $(boost-root) {
 	     "(--boost-root=/path/to/boost) or in the environment variable BOOST_ROOT" ;
 }
 use-project boost : $(boost-root) ;
+
+#
+# Import the ODTONE Project
+#
+odtone-root ?= [ option.get odtone-root ] ;
+odtone-root ?= [ os.environ ODTONE_ROOT ] ;
+
+if $(odtone-root) {
+	use-project odtone : $(odtone-root) ;
+}
 
 #
 # General utilities
@@ -72,7 +82,7 @@ rule explicit-alias ( main-target-name :
 
     explicit $(main-target-name) ;
 }
-IMPORT $(__name__) : explicit-alias : : odimm.explicit-alias ;
+IMPORT $(__name__) : explicit-alias : : opmip.explicit-alias ;
 
 rule runtime-lib ( name : basename ? )
 {
@@ -85,18 +95,28 @@ rule runtime-lib ( name : basename ? )
 		  <runtime-link>static:<link>static
 		;
 }
-IMPORT $(__name__) : runtime-lib : : odimm.runtime-lib ;
+IMPORT $(__name__) : runtime-lib : : opmip.runtime-lib ;
+
+#
+# Check if the ODTONE project has been included
+#
+rule has-odtone ( )
+{
+	return $(odtone-root) ;
+}
+IMPORT $(__name__) : has-odtone : : opmip.has-odtone ;
 
 #
 # Add alias for external usage
 #
-explicit-alias base : lib/odimm//odimm ;
+explicit-alias base : lib/opmip//opmip ;
 
 #
 # Build
 #
-install odimm-dist
-	#: app/odimm-cmd//odimm-cmd
-	: app/odimm-maar//odimm-maar
+install opmip-dist
+	: app/odimm-cmd//odimm-cmd
+	  app/opmip-lma//opmip-lma
+	  app/opmip-mag//opmip-mag
 	: <location>dist
 	;
